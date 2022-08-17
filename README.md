@@ -2,6 +2,9 @@
 
 In order to build this locally you will need to download a copy of the [GeoLite2 City](http://dev.maxmind.com/geoip/geoip2/geolite2/#Downloads) from MaxMind.
 
+# Build
+`mvn clean install -Dcheckstyle.skip -Dmaven.test.skip=true`
+
 # Configuration
 
 ## MaxMindTransformation
@@ -221,4 +224,8 @@ This schema contains all of the data that can be retrieved from the MaxMind api.
 | isp          | true     | [String](https://kafka.apache.org/0102/javadoc/org/apache/kafka/connect/data/Schema.Type.html#STRING) |               |               |
 | organization | true     | [String](https://kafka.apache.org/0102/javadoc/org/apache/kafka/connect/data/Schema.Type.html#STRING) |               |               |
 
+# Others
+## update maxmind dataset automaticly
+https://github.com/maxmind/geoipupdate
 
+## 

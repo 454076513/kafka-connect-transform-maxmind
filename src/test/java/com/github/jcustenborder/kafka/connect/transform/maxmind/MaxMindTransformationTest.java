@@ -20,6 +20,8 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.hash.Hashing;
 import com.google.common.hash.HashingInputStream;
 import com.google.common.io.CharStreams;
+
+
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
 import org.apache.kafka.connect.connector.ConnectRecord;
@@ -44,6 +46,7 @@ import java.net.URL;
 import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
 import java.nio.channels.ReadableByteChannel;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.zip.GZIPInputStream;
 
@@ -129,8 +132,9 @@ public class MaxMindTransformationTest {
   public void before() {
 
     Map<String, ?> settings = ImmutableMap.of(
-        MaxMindTransformationConfig.FIELD_INPUT_CONFIG, "ipAddress",
+        MaxMindTransformationConfig.FIELD_INPUT_CONFIG, "$.geo.ipAddress",
         MaxMindTransformationConfig.FIELD_OUTPUT_CONFIG, "geoIpData",
+        MaxMindTransformationConfig.MAXMIND_ENTERPRISE_CONFIG, false,
         MaxMindTransformationConfig.MAXMIND_DATABASE_PATH_CONFIG, geoLiteDataFile.getAbsolutePath()
     );
 
@@ -145,19 +149,33 @@ public class MaxMindTransformationTest {
         .field("ipAddress", Schema.OPTIONAL_STRING_SCHEMA)
         .build();
     final Struct inputStruct = new Struct(inputSchema)
-        .put("ipAddress", "8.8.8.8");
+        .put("ipAddress", "121.74.84.197");
 
+    final Map<String, Object> value = new HashMap<>();
+        value.put("ipAddress", "121.74.84.197");
+        value.put("geo", ImmutableMap.of("ipAddress", "8.8.8.8"));
+
+        
     final ConnectRecord inputRecord = new SinkRecord(
         "test",
         1,
         null,
         null,
         inputSchema,
-        inputStruct,
+        // inputStruct,
+        // JSONObject.toJSONString(value),
+        value,
         System.currentTimeMillis()
     );
 
-    final ConnectRecord outputRecord = this.transformation.apply(inputRecord);
+    
+    long start = System.currentTimeMillis();
+
+    final ConnectRecord outputRecord = this.transformation.apply(inputRecord);  
+    System.out.println(outputRecord.value());
+    
+    System.out.println(System.currentTimeMillis() - start);
+    
   }
 
   @AfterEach

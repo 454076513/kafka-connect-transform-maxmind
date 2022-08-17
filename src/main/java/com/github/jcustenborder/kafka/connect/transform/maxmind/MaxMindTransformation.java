@@ -18,6 +18,11 @@ package com.github.jcustenborder.kafka.connect.transform.maxmind;
 import com.github.jcustenborder.kafka.connect.utils.config.Description;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
+import com.google.common.collect.Maps;
+import com.jayway.jsonpath.Configuration;
+import com.jayway.jsonpath.DocumentContext;
+import com.jayway.jsonpath.JsonPath;
+import com.jayway.jsonpath.Option;
 import com.maxmind.geoip2.DatabaseReader;
 import com.maxmind.geoip2.exception.GeoIp2Exception;
 import com.maxmind.geoip2.model.AnonymousIpResponse;
@@ -29,6 +34,7 @@ import com.maxmind.geoip2.model.DomainResponse;
 import com.maxmind.geoip2.model.EnterpriseResponse;
 import com.maxmind.geoip2.model.InsightsResponse;
 import com.maxmind.geoip2.model.IspResponse;
+
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.connect.connector.ConnectRecord;
 import org.apache.kafka.connect.data.Field;
@@ -45,6 +51,7 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.HashMap;
 import java.util.Map;
+import static org.apache.kafka.connect.transforms.util.Requirements.requireMap;
 
 @Description("This transformation is used to lookup data from a `MaxMind database <http://dev.maxmind.com/geoip/geoip2/geolite2/#Downloads>`_ " +
     "and append the data to an existing struct.")
@@ -53,10 +60,171 @@ public class MaxMindTransformation<R extends ConnectRecord<R>> implements Transf
   private MaxMindTransformationConfig config;
   private DatabaseReader reader;
   private Map<Schema, Schema> schemaLookup = new HashMap<>();
-
+  private static final Configuration jsonPathConfig = Configuration.defaultConfiguration()
+  .addOptions(Option.DEFAULT_PATH_LEAF_TO_NULL,Option.SUPPRESS_EXCEPTIONS);
+  private static final String PURPOSE = "field insertion";
 
   @Override
   public R apply(R record) {
+    // if (null == record.value()) {
+    //   return record;
+    // } else if (null == record.valueSchema()) {
+    //     return applySchemaless(record);
+    // } else {
+    //     return applyWithSchema(record);
+    // }
+    return applySchemaless(record);
+  }
+
+  private R applySchemaless(R record) {
+    Object value = record.value();
+
+    if (null == value) {
+      return record;
+    }
+
+    // https://github.com/json-path/JsonPath
+    DocumentContext doc = JsonPath.using(jsonPathConfig).parse(value);
+    String input = doc.read(config.fieldInput);
+
+    if (Strings.isNullOrEmpty(input)) {
+      return record;
+    }
+
+    InetAddress address = null;
+    try {
+      address = InetAddress.getByName(input);
+    } catch (UnknownHostException ex) {
+      log.warn("Could not convert '{}' to InetAddress.", input, ex);
+    }
+    
+
+    log.trace("apply() - address = '{}'", address);
+
+    final AnonymousIpResponse anonymousIpResponse;
+    final AsnResponse asnResponse;
+    final CityResponse cityResponse;
+    final CountryResponse countryResponse;
+    final ConnectionTypeResponse connectionTypeResponse;
+    final DomainResponse domainResponse;
+    final EnterpriseResponse enterpriseResponse;
+    final IspResponse ispResponse;
+    final InsightsResponse insightsResponse = null;
+    Map<String, Object> geoIpStruct = null;
+
+    if (null != address) {
+      try {
+        if (this.config.maxmindAnonymousIp) {
+          log.trace("apply() - Calling anonymousIp('{}')", address);
+          anonymousIpResponse = this.reader.anonymousIp(address);
+        } else {
+          anonymousIpResponse = null;
+        }
+
+        if (this.config.maxmindAsn) {
+          log.trace("apply() - Calling asn('{}')", address);
+          asnResponse = this.reader.asn(address);
+        } else {
+          asnResponse = null;
+        }
+
+        if (this.config.maxmindCity) {
+          log.trace("apply() - Calling city('{}')", address);
+          cityResponse = this.reader.city(address);
+        } else {
+          cityResponse = null;
+        }
+
+        if (this.config.maxmindConnectionType) {
+          log.trace("apply() - Calling connectionType('{}')", address);
+          connectionTypeResponse = this.reader.connectionType(address);
+        } else {
+          connectionTypeResponse = null;
+        }
+
+        if (this.config.maxmindCountry) {
+          log.trace("apply() - Calling country('{}')", address);
+          countryResponse = this.reader.country(address);
+        } else {
+          countryResponse = null;
+        }
+
+        if (this.config.maxmindDomain) {
+          log.trace("apply() - Calling domain('{}')", address);
+          domainResponse = this.reader.domain(address);
+        } else {
+          domainResponse = null;
+        }
+
+        if (this.config.maxmindEnterprise) {
+          log.trace("apply() - Calling enterprise('{}')", address);
+          enterpriseResponse = this.reader.enterprise(address);
+        } else {
+          enterpriseResponse = null;
+        }
+
+        if (this.config.maxmindIsp) {
+          log.trace("apply() - Calling isp('{}')", address);
+          ispResponse = this.reader.isp(address);
+        } else {
+          ispResponse = null;
+        }
+
+        geoIpStruct = Schemaless.struct(anonymousIpResponse, asnResponse, cityResponse, connectionTypeResponse, countryResponse, domainResponse, enterpriseResponse, insightsResponse, ispResponse);
+      } catch (GeoIp2Exception ex) {
+        log.warn("Exception thrown while querying '{}'", address, ex);
+      } catch (IOException ex) {
+        log.error("Exception thrown while querying '{}'", address, ex);
+      }
+    }
+    // outputValue.put(this.config.fieldOutput, geoIpStruct);
+
+    final Map<String, Object> updatedValue = requireMap(record.value(),PURPOSE);
+
+    // final Map<String, Object> updatedValue = new HashMap<>(originValue);
+
+    updatedValue.put(this.config.fieldOutput, geoIpStruct);
+
+    return record.newRecord(
+        record.topic(),
+        record.kafkaPartition(),
+        record.keySchema(),
+        record.key(),
+        null,
+        updatedValue,
+        record.timestamp()
+    );
+  }
+
+  @Override
+  public ConfigDef config() {
+    return MaxMindTransformationConfig.config();
+  }
+
+  @Override
+  public void close() {
+    try {
+      reader.close();
+    } catch (IOException e) {
+      log.warn("Exception thrown while closing reader.", e);
+    }
+  }
+
+  @Override
+  public void configure(Map<String, ?> map) {
+    this.config = new MaxMindTransformationConfig(map);
+
+    DatabaseReader.Builder builder = new DatabaseReader.Builder(this.config.databasePath)
+        .fileMode(this.config.databaseFileMode);
+
+    try {
+      this.reader = builder.build();
+    } catch (IOException ex) {
+      throw new ConnectException("Exception thrown while opening database.", ex);
+    }
+  }
+
+  private R applyWithSchema(R record) {
     Preconditions.checkState(
         null != record.valueSchema() && Schema.Type.STRUCT == record.valueSchema().type(),
         "record.valueSchema() must be a struct."
@@ -212,31 +380,4 @@ public class MaxMindTransformation<R extends ConnectRecord<R>> implements Transf
     );
   }
 
-  @Override
-  public ConfigDef config() {
-    return MaxMindTransformationConfig.config();
-  }
-
-  @Override
-  public void close() {
-    try {
-      reader.close();
-    } catch (IOException e) {
-      log.warn("Exception thrown while closing reader.", e);
-    }
-  }
-
-  @Override
-  public void configure(Map<String, ?> map) {
-    this.config = new MaxMindTransformationConfig(map);
-
-    DatabaseReader.Builder builder = new DatabaseReader.Builder(this.config.databasePath)
-        .fileMode(this.config.databaseFileMode);
-
-    try {
-      this.reader = builder.build();
-    } catch (IOException ex) {
-      throw new ConnectException("Exception thrown while opening database.", ex);
-    }
-  }
 }
